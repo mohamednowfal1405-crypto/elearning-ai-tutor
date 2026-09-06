@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 
+const API_URL = "http://127.0.0.1:8000";
+
 function App() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState("");
@@ -8,8 +10,10 @@ function App() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Check if user is already logged in when the app loads,
-  // and keep listening for login/logout changes.
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [uploading, setUploading] = useState(false);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -50,18 +54,69 @@ function App() {
     await supabase.auth.signOut();
   }
 
-  // If logged in, show a simple dashboard
+  async function handleFileUpload(e) {
+    e.preventDefault();
+    if (!selectedFile) {
+      setUploadStatus("Please choose a PDF file first.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadStatus("Uploading and processing...");
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/upload?user_id=${session.user.id}`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setUploadStatus(`Upload failed: ${data.detail}`);
+      } else {
+        setUploadStatus(
+          `Success! "${data.filename}" uploaded (${data.text_length} characters extracted).`
+        );
+        setSelectedFile(null);
+      }
+    } catch (err) {
+      setUploadStatus(`Upload failed: could not reach the backend. Is it running?`);
+    }
+
+    setUploading(false);
+  }
+
   if (session) {
     return (
-      <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+      <div style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "500px" }}>
         <h1>E-Learning AI Tutor</h1>
         <p>Logged in as: <strong>{session.user.email}</strong></p>
-        <button onClick={handleLogout}>Log Out</button>
+        <button onClick={handleLogout} style={{ marginBottom: "2rem" }}>Log Out</button>
+
+        <h2>Upload your notes (PDF)</h2>
+        <form onSubmit={handleFileUpload}>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setSelectedFile(e.target.files[0])}
+            style={{ marginBottom: "1rem", display: "block" }}
+          />
+          <button type="submit" disabled={uploading}>
+            {uploading ? "Uploading..." : "Upload PDF"}
+          </button>
+        </form>
+        {uploadStatus && <p style={{ marginTop: "1rem" }}>{uploadStatus}</p>}
       </div>
     );
   }
 
-  // Otherwise, show the login/signup form
   return (
     <div style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "400px" }}>
       <h1>E-Learning AI Tutor</h1>
