@@ -5,6 +5,7 @@ from pypdf import PdfReader
 import io
 
 from supabase_client import supabase
+from rag import process_and_store_document, search_relevant_chunks
 
 app = FastAPI(title="E-Learning AI Tutor API")
 
@@ -30,20 +31,18 @@ def health_check():
 async def upload_document(user_id: str, file: UploadFile = File(...)):
     """
     Receives a PDF, extracts its text, stores the file in Supabase Storage,
-    and saves a record (with extracted text) in the documents table.
+    saves a record in the documents table, then chunks + embeds the text
+    for later semantic search (RAG).
     """
-    # 1. Basic validation
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported right now.")
 
     file_bytes = await file.read()
 
-    # Limit file size to 10MB to avoid abuse / huge free-tier storage usage
     max_size_bytes = 10 * 1024 * 1024
     if len(file_bytes) > max_size_bytes:
         raise HTTPException(status_code=400, detail="File too large. Max size is 10MB.")
 
-    # 2. Extract text from the PDF
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
         extracted_text = ""
@@ -58,7 +57,6 @@ async def upload_document(user_id: str, file: UploadFile = File(...)):
             detail="No text could be extracted. This PDF might be scanned images rather than real text.",
         )
 
-    # 3. Upload the raw file to Supabase Storage
     storage_path = f"{user_id}/{uuid.uuid4()}_{file.filename}"
     try:
         supabase.storage.from_("documents").upload(
@@ -67,7 +65,6 @@ async def upload_document(user_id: str, file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
 
-    # 4. Save a record in the documents table
     try:
         result = (
             supabase.table("documents")
@@ -81,12 +78,37 @@ async def upload_document(user_id: str, file: UploadFile = File(...)):
             )
             .execute()
         )
+        document_id = result.data[0]["id"]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insert failed: {str(e)}")
+
+    # NEW: chunk + embed the document for RAG search
+    try:
+        chunk_count = process_and_store_document(document_id, user_id, extracted_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding/chunking failed: {str(e)}")
 
     return {
         "message": "Upload successful",
         "filename": file.filename,
         "text_length": len(extracted_text),
-        "document_id": result.data[0]["id"] if result.data else None,
+        "document_id": document_id,
+        "chunks_created": chunk_count,
+    }
+
+
+@app.get("/ask")
+def ask_question(user_id: str, document_id: int, question: str):
+    """
+    Test endpoint: given a question, find the most relevant chunks
+    from a specific document. (We'll connect this to Gemini chat generation next.)
+    """
+    try:
+        relevant_chunks = search_relevant_chunks(question, user_id, document_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+    return {
+        "question": question,
+        "relevant_chunks": relevant_chunks,
     }
