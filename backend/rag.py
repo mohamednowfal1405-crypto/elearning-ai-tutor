@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -91,11 +92,15 @@ def search_relevant_chunks(query: str, user_id: str, document_id: int, match_cou
 
     return [row["chunk_text"] for row in result.data]
 
+
 def generate_tutor_answer(question: str, relevant_chunks: list[str]) -> str:
     """
     Sends the user's question + the relevant document chunks to Gemini,
     instructing it to answer ONLY based on that content (this is the
     core of RAG - grounding the AI's answer in real, retrieved material).
+
+    Retries automatically if Gemini's free tier is briefly overloaded (503),
+    since these spikes are usually short-lived.
     """
     if not relevant_chunks:
         return "I couldn't find anything relevant to that question in your uploaded document. Try rephrasing, or ask about something else covered in the material."
@@ -116,9 +121,27 @@ STUDENT'S QUESTION:
 
 YOUR ANSWER:"""
 
-    response = client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=prompt,
-    )
+    max_attempts = 3
+    wait_seconds = 1
 
-    return response.text
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
+            is_last_attempt = attempt == max_attempts
+
+            if is_overloaded and not is_last_attempt:
+                time.sleep(wait_seconds)
+                wait_seconds *= 2  # back off a bit longer each retry
+                continue
+
+            if is_overloaded:
+                return "The AI tutor is experiencing high demand right now. Please try asking again in a few seconds."
+
+            # Not an overload issue - some other real error, don't hide it
+            raise
