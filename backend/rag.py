@@ -1,4 +1,5 @@
 import os
+import json
 import time
 from dotenv import load_dotenv
 from google import genai
@@ -144,4 +145,53 @@ YOUR ANSWER:"""
                 return "The AI tutor is experiencing high demand right now. Please try asking again in a few seconds."
 
             # Not an overload issue - some other real error, don't hide it
+            raise
+
+def generate_course_structure(document_text: str, filename: str) -> dict:
+    """
+    Sends the full document text to Gemini and asks it to design a
+    structured mini-course (title + a list of lessons with summaries)
+    based on that content. Returns a Python dict.
+    """
+    prompt = f"""You are an expert curriculum designer. A student has uploaded a document called "{filename}" and wants you to turn its content into a structured mini-course.
+
+Read the content below and design a course with:
+- An overall course title (short and descriptive)
+- Between 4 and 8 lessons, each covering a distinct part of the material, in a logical learning order
+- Each lesson needs: a short title, and a 1-2 sentence summary of what it covers
+
+Respond with ONLY valid JSON, no other text, no markdown code fences, in exactly this structure:
+{{
+  "course_title": "string",
+  "lessons": [
+    {{"lesson_number": 1, "title": "string", "summary": "string"}}
+  ]
+}}
+
+DOCUMENT CONTENT:
+{document_text}
+"""
+
+    max_attempts = 3
+    wait_seconds = 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
+            is_last_attempt = attempt == max_attempts
+
+            if is_overloaded and not is_last_attempt:
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
+
             raise

@@ -5,7 +5,12 @@ from pypdf import PdfReader
 import io
 
 from supabase_client import supabase
-from rag import process_and_store_document, search_relevant_chunks, generate_tutor_answer
+from rag import (
+    process_and_store_document,
+    search_relevant_chunks,
+    generate_tutor_answer,
+    generate_course_structure,
+)
 
 app = FastAPI(title="E-Learning AI Tutor API")
 
@@ -134,4 +139,56 @@ def chat_with_tutor(user_id: str, document_id: int, question: str):
     return {
         "question": question,
         "answer": answer,
+    }
+
+
+@app.post("/generate-course")
+def generate_course(user_id: str, document_id: int):
+    """
+    Generates a structured mini-course from a document's full text,
+    and saves the result so it can be reloaded later without regenerating.
+    """
+    # 1. Fetch the document's full extracted text
+    try:
+        doc_result = (
+            supabase.table("documents")
+            .select("filename, extracted_text")
+            .eq("id", document_id)
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Document not found: {str(e)}")
+
+    filename = doc_result.data["filename"]
+    document_text = doc_result.data["extracted_text"]
+
+    # 2. Ask Gemini to design the course
+    try:
+        course_data = generate_course_structure(document_text, filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Course generation failed: {str(e)}")
+
+    # 3. Save the generated course
+    try:
+        result = (
+            supabase.table("courses")
+            .insert(
+                {
+                    "document_id": document_id,
+                    "user_id": user_id,
+                    "title": course_data["course_title"],
+                    "lessons": course_data["lessons"],
+                }
+            )
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Saving course failed: {str(e)}")
+
+    return {
+        "course_id": result.data[0]["id"],
+        "title": course_data["course_title"],
+        "lessons": course_data["lessons"],
     }
