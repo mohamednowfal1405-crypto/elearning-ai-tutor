@@ -5,7 +5,7 @@ from pypdf import PdfReader
 import io
 
 from supabase_client import supabase
-from rag import process_and_store_document, search_relevant_chunks
+from rag import process_and_store_document, search_relevant_chunks, generate_tutor_answer
 
 app = FastAPI(title="E-Learning AI Tutor API")
 
@@ -82,7 +82,7 @@ async def upload_document(user_id: str, file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insert failed: {str(e)}")
 
-    # NEW: chunk + embed the document for RAG search
+    # Chunk + embed the document for RAG search
     try:
         chunk_count = process_and_store_document(document_id, user_id, extracted_text)
     except Exception as e:
@@ -100,8 +100,9 @@ async def upload_document(user_id: str, file: UploadFile = File(...)):
 @app.get("/ask")
 def ask_question(user_id: str, document_id: int, question: str):
     """
-    Test endpoint: given a question, find the most relevant chunks
-    from a specific document. (We'll connect this to Gemini chat generation next.)
+    Debug/testing endpoint: given a question, find the most relevant chunks
+    from a specific document, without generating an AI answer.
+    Useful for checking retrieval quality directly.
     """
     try:
         relevant_chunks = search_relevant_chunks(question, user_id, document_id)
@@ -111,4 +112,26 @@ def ask_question(user_id: str, document_id: int, question: str):
     return {
         "question": question,
         "relevant_chunks": relevant_chunks,
+    }
+
+
+@app.get("/chat")
+def chat_with_tutor(user_id: str, document_id: int, question: str):
+    """
+    The real AI tutor endpoint: retrieves relevant context from the
+    student's document, then asks Gemini to answer using only that context.
+    """
+    try:
+        relevant_chunks = search_relevant_chunks(question, user_id, document_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+    try:
+        answer = generate_tutor_answer(question, relevant_chunks)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+    return {
+        "question": question,
+        "answer": answer,
     }

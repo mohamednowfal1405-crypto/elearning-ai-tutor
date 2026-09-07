@@ -90,3 +90,35 @@ def search_relevant_chunks(query: str, user_id: str, document_id: int, match_cou
     ).execute()
 
     return [row["chunk_text"] for row in result.data]
+
+def generate_tutor_answer(question: str, relevant_chunks: list[str]) -> str:
+    """
+    Sends the user's question + the relevant document chunks to Gemini,
+    instructing it to answer ONLY based on that content (this is the
+    core of RAG - grounding the AI's answer in real, retrieved material).
+    """
+    if not relevant_chunks:
+        return "I couldn't find anything relevant to that question in your uploaded document. Try rephrasing, or ask about something else covered in the material."
+
+    context = "\n\n---\n\n".join(relevant_chunks)
+
+    prompt = f"""You are a friendly, patient AI tutor helping a student understand their own uploaded material.
+
+Use ONLY the context below to answer the student's question. If the answer isn't in the context, say so honestly rather than guessing or using outside knowledge.
+
+Explain clearly, like a good tutor would - break things down simply if the question suggests the student is still learning the topic.
+
+CONTEXT FROM THE STUDENT'S DOCUMENT:
+{context}
+
+STUDENT'S QUESTION:
+{question}
+
+YOUR ANSWER:"""
+
+    response = client.models.generate_content(
+        model="gemini-flash-latest",
+        contents=prompt,
+    )
+
+    return response.text
