@@ -195,3 +195,55 @@ DOCUMENT CONTENT:
                 continue
 
             raise
+
+def generate_lesson_explanation(
+    lesson_title: str, lesson_summary: str, user_id: str, document_id: int
+) -> str:
+    """
+    Generates a detailed, tutor-style explanation for one specific lesson,
+    grounded in the most relevant chunks of the student's own document.
+    """
+    # Reuse our existing RAG search, using the lesson title+summary as the "question"
+    search_query = f"{lesson_title}: {lesson_summary}"
+    relevant_chunks = search_relevant_chunks(search_query, user_id, document_id, match_count=5)
+
+    if not relevant_chunks:
+        return "I couldn't find enough detail in your document to expand on this lesson further."
+
+    context = "\n\n---\n\n".join(relevant_chunks)
+
+    prompt = f"""You are a patient, friendly AI tutor teaching a lesson within a course you designed for a student, based on their own uploaded material.
+
+LESSON TITLE: {lesson_title}
+LESSON SUMMARY: {lesson_summary}
+
+Using ONLY the context below (from the student's own document), write a clear, well-structured lesson explanation. Teach the concepts properly - explain what things mean, why they matter, and how they connect - as if this were a real lesson, not just a summary. Use short paragraphs or bullet points where helpful. Keep it focused on this lesson's topic only.
+
+CONTEXT FROM THE STUDENT'S DOCUMENT:
+{context}
+
+LESSON EXPLANATION:"""
+
+    max_attempts = 3
+    wait_seconds = 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
+            is_last_attempt = attempt == max_attempts
+
+            if is_overloaded and not is_last_attempt:
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
+
+            if is_overloaded:
+                return "The AI tutor is experiencing high demand right now. Please try again in a few seconds."
+
+            raise

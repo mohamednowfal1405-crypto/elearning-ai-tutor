@@ -10,6 +10,7 @@ from rag import (
     search_relevant_chunks,
     generate_tutor_answer,
     generate_course_structure,
+    generate_lesson_explanation,
 )
 
 app = FastAPI(title="E-Learning AI Tutor API")
@@ -192,3 +193,19 @@ def generate_course(user_id: str, document_id: int):
         "title": course_data["course_title"],
         "lessons": course_data["lessons"],
     }
+
+
+@app.get("/lesson-detail")
+def lesson_detail(user_id: str, document_id: int, lesson_title: str, lesson_summary: str):
+    """
+    Generates a deeper explanation for one specific lesson within a
+    generated course, grounded in the student's document content.
+    """
+    try:
+        explanation = generate_lesson_explanation(
+            lesson_title, lesson_summary, user_id, document_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lesson generation failed: {str(e)}")
+
+    return {"explanation": explanation}
