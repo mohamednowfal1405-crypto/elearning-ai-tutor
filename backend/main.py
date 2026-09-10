@@ -11,6 +11,7 @@ from rag import (
     generate_tutor_answer,
     generate_course_structure,
     generate_lesson_explanation,
+    generate_lesson_quiz,
 )
 
 app = FastAPI(title="E-Learning AI Tutor API")
@@ -209,3 +210,25 @@ def lesson_detail(user_id: str, document_id: int, lesson_title: str, lesson_summ
         raise HTTPException(status_code=500, detail=f"Lesson generation failed: {str(e)}")
 
     return {"explanation": explanation}
+
+
+@app.get("/lesson-quiz")
+def lesson_quiz(user_id: str, document_id: int, lesson_title: str, lesson_summary: str):
+    """
+    Generates a short multiple-choice quiz for one specific lesson,
+    grounded in the student's document content.
+    """
+    try:
+        questions = generate_lesson_quiz(
+            lesson_title, lesson_summary, user_id, document_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Quiz generation failed: {str(e)}")
+
+    if not questions:
+        raise HTTPException(
+            status_code=404,
+            detail="Not enough content found to generate a quiz for this lesson.",
+        )
+
+    return {"questions": questions}

@@ -128,7 +128,7 @@ YOUR ANSWER:"""
     for attempt in range(1, max_attempts + 1):
         try:
             response = client.models.generate_content(
-                model="gemini-flash-latest",
+                model="gemini-3.6-flash",
                 contents=prompt,
             )
             return response.text
@@ -178,7 +178,7 @@ DOCUMENT CONTENT:
     for attempt in range(1, max_attempts + 1):
         try:
             response = client.models.generate_content(
-                model="gemini-flash-latest",
+                model="gemini-3.6-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -230,7 +230,7 @@ LESSON EXPLANATION:"""
     for attempt in range(1, max_attempts + 1):
         try:
             response = client.models.generate_content(
-                model="gemini-flash-latest",
+                model="gemini-3.6-flash",
                 contents=prompt,
             )
             return response.text
@@ -245,5 +245,68 @@ LESSON EXPLANATION:"""
 
             if is_overloaded:
                 return "The AI tutor is experiencing high demand right now. Please try again in a few seconds."
+
+            raise
+
+def generate_lesson_quiz(
+    lesson_title: str, lesson_summary: str, user_id: str, document_id: int
+) -> list[dict]:
+    """
+    Generates 3-5 multiple-choice quiz questions for a specific lesson,
+    grounded in the relevant chunks of the student's own document.
+    """
+    search_query = f"{lesson_title}: {lesson_summary}"
+    relevant_chunks = search_relevant_chunks(search_query, user_id, document_id, match_count=5)
+
+    if not relevant_chunks:
+        return []
+
+    context = "\n\n---\n\n".join(relevant_chunks)
+
+    prompt = f"""You are a quiz designer creating a short quiz for one lesson in a course, based on a student's own uploaded material.
+
+LESSON TITLE: {lesson_title}
+LESSON SUMMARY: {lesson_summary}
+
+Using ONLY the context below, write between 3 and 5 multiple-choice questions that test understanding of this lesson's content. Each question needs exactly 4 options, one correct answer, and a short explanation of why that answer is correct.
+
+Respond with ONLY valid JSON, no other text, no markdown code fences, in exactly this structure:
+{{
+  "questions": [
+    {{
+      "question": "string",
+      "options": ["string", "string", "string", "string"],
+      "correct_index": 0,
+      "explanation": "string"
+    }}
+  ]
+}}
+
+CONTEXT FROM THE STUDENT'S DOCUMENT:
+{context}
+"""
+
+    max_attempts = 3
+    wait_seconds = 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            result = json.loads(response.text)
+            return result["questions"]
+        except Exception as e:
+            is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
+            is_last_attempt = attempt == max_attempts
+
+            if is_overloaded and not is_last_attempt:
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
 
             raise

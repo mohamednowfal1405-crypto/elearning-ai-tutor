@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabaseClient";
+import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -10,25 +11,31 @@ function App() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Upload-related state
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  // Active document (the one we're tutoring on) + chat state
-  const [activeDocument, setActiveDocument] = useState(null); // { id, filename }
+  const [activeDocument, setActiveDocument] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
-  // Course-related state
-  const [course, setCourse] = useState(null); // { title, lessons: [...] }
+  const [course, setCourse] = useState(null);
   const [generatingCourse, setGeneratingCourse] = useState(false);
   const [courseError, setCourseError] = useState("");
-  const [selectedLesson, setSelectedLesson] = useState(null); // the lesson object
+  const [selectedLesson, setSelectedLesson] = useState(null);
   const [lessonExplanation, setLessonExplanation] = useState("");
   const [loadingLesson, setLoadingLesson] = useState(false);
+
+  const [quizQuestions, setQuizQuestions] = useState(null);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizError, setQuizError] = useState("");
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState(null);
+  const [answerRevealed, setAnswerRevealed] = useState(false);
+  const [quizScore, setQuizScore] = useState(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -82,11 +89,13 @@ function App() {
     e.preventDefault();
     if (!selectedFile) {
       setUploadStatus("Please choose a PDF file first.");
+      setUploadSuccess(false);
       return;
     }
 
     setUploading(true);
     setUploadStatus("Uploading and processing...");
+    setUploadSuccess(false);
     setCourse(null);
     setSelectedLesson(null);
 
@@ -102,10 +111,12 @@ function App() {
 
       if (!response.ok) {
         setUploadStatus(`Upload failed: ${data.detail}`);
+        setUploadSuccess(false);
       } else {
         setUploadStatus(
-          `Success! "${data.filename}" is ready (${data.chunks_created} chunks indexed).`
+          `"${data.filename}" is ready — ${data.chunks_created} chunks indexed.`
         );
+        setUploadSuccess(true);
         setSelectedFile(null);
         setActiveDocument({ id: data.document_id, filename: data.filename });
         setChatMessages([
@@ -116,7 +127,8 @@ function App() {
         ]);
       }
     } catch (err) {
-      setUploadStatus(`Upload failed: could not reach the backend. Is it running?`);
+      setUploadStatus("Upload failed: could not reach the backend. Is it running?");
+      setUploadSuccess(false);
     }
 
     setUploading(false);
@@ -188,10 +200,20 @@ function App() {
     setGeneratingCourse(false);
   }
 
+  function resetQuizState() {
+    setQuizQuestions(null);
+    setQuizError("");
+    setCurrentQuestionIndex(0);
+    setSelectedAnswer(null);
+    setAnswerRevealed(false);
+    setQuizScore(0);
+  }
+
   async function handleLessonClick(lesson) {
     setSelectedLesson(lesson);
     setLessonExplanation("");
     setLoadingLesson(true);
+    resetQuizState();
 
     try {
       const params = new URLSearchParams({
@@ -215,194 +237,270 @@ function App() {
     setLoadingLesson(false);
   }
 
+  async function handleStartQuiz() {
+    if (!selectedLesson) return;
+
+    resetQuizState();
+    setQuizLoading(true);
+
+    try {
+      const params = new URLSearchParams({
+        user_id: session.user.id,
+        document_id: activeDocument.id,
+        lesson_title: selectedLesson.title,
+        lesson_summary: selectedLesson.summary,
+      });
+      const response = await fetch(`${API_URL}/lesson-quiz?${params.toString()}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setQuizError(`Quiz generation failed: ${data.detail}`);
+      } else {
+        setQuizQuestions(data.questions);
+      }
+    } catch (err) {
+      setQuizError("Could not reach the backend. Is it running?");
+    }
+
+    setQuizLoading(false);
+  }
+
+  function handleSelectAnswer(index) {
+    if (answerRevealed) return;
+    setSelectedAnswer(index);
+    setAnswerRevealed(true);
+
+    const currentQuestion = quizQuestions[currentQuestionIndex];
+    if (index === currentQuestion.correct_index) {
+      setQuizScore((prev) => prev + 1);
+    }
+  }
+
+  function handleNextQuestion() {
+    setSelectedAnswer(null);
+    setAnswerRevealed(false);
+    setCurrentQuestionIndex((prev) => prev + 1);
+  }
+
   if (session) {
+    const currentQuestion =
+      quizQuestions && currentQuestionIndex < quizQuestions.length
+        ? quizQuestions[currentQuestionIndex]
+        : null;
+    const quizFinished = quizQuestions && currentQuestionIndex >= quizQuestions.length;
+
     return (
-      <div style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "700px", margin: "0 auto" }}>
-        <h1>E-Learning AI Tutor</h1>
-        <p>Logged in as: <strong>{session.user.email}</strong></p>
-        <button onClick={handleLogout} style={{ marginBottom: "2rem" }}>Log Out</button>
-
-        <h2>Upload your notes (PDF)</h2>
-        <form onSubmit={handleFileUpload}>
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => setSelectedFile(e.target.files[0])}
-            style={{ marginBottom: "1rem", display: "block" }}
-          />
-          <button type="submit" disabled={uploading}>
-            {uploading ? "Uploading..." : "Upload PDF"}
+      <div className="app-shell">
+        <div className="dashboard">
+          <h1 className="app-title">E-Learning AI Tutor</h1>
+          <p className="session-line">
+            Logged in as <strong>{session.user.email}</strong>
+          </p>
+          <button className="secondary" onClick={handleLogout} style={{ marginBottom: "2rem" }}>
+            Log Out
           </button>
-        </form>
-        {uploadStatus && <p style={{ marginTop: "1rem" }}>{uploadStatus}</p>}
 
-        {activeDocument && (
-          <>
-            {/* Course generation section */}
-            <div style={{ marginTop: "2rem" }}>
-              <h2>Course</h2>
-              {!course && (
-                <button onClick={handleGenerateCourse} disabled={generatingCourse}>
-                  {generatingCourse ? "Designing your course..." : "Generate Course from this document"}
-                </button>
-              )}
-              {courseError && <p style={{ color: "red" }}>{courseError}</p>}
+          <div className="upload-block">
+            <h2 className="section-title">Upload your notes</h2>
+            <form onSubmit={handleFileUpload}>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => setSelectedFile(e.target.files[0])}
+                style={{ marginBottom: "1rem", display: "block" }}
+              />
+              <button type="submit" disabled={uploading}>
+                {uploading ? "Uploading..." : "Upload PDF"}
+              </button>
+            </form>
+            {uploadStatus && (
+              <p className={`upload-status ${uploadSuccess ? "success" : ""}`}>{uploadStatus}</p>
+            )}
+          </div>
 
-              {course && (
-                <div style={{ display: "flex", gap: "1.5rem", marginTop: "1rem" }}>
-                  {/* Lesson list */}
-                  <div style={{ flex: "1" }}>
-                    <h3>{course.title}</h3>
-                    <ol style={{ paddingLeft: "1.2rem" }}>
-                      {course.lessons.map((lesson) => (
-                        <li
-                          key={lesson.lesson_number}
-                          onClick={() => handleLessonClick(lesson)}
-                          style={{
-                            cursor: "pointer",
-                            marginBottom: "0.75rem",
-                            padding: "0.5rem",
-                            borderRadius: "6px",
-                            backgroundColor:
-                              selectedLesson?.lesson_number === lesson.lesson_number
-                                ? "#e0f0ff"
-                                : "transparent",
-                          }}
-                        >
-                          <strong>{lesson.title}</strong>
-                          <p style={{ margin: "0.25rem 0 0", fontSize: "0.9rem", color: "#555" }}>
-                            {lesson.summary}
-                          </p>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
+          {activeDocument && (
+            <>
+              <div className="course-block">
+                <h2 className="section-title">Course</h2>
+                {!course && (
+                  <button onClick={handleGenerateCourse} disabled={generatingCourse}>
+                    {generatingCourse ? "Designing your course..." : "Generate Course from this document"}
+                  </button>
+                )}
+                {courseError && <p className="error-text">{courseError}</p>}
 
-                  {/* Lesson detail panel */}
-                  {selectedLesson && (
-                    <div
-                      style={{
-                        flex: "1.3",
-                        border: "1px solid #ddd",
-                        borderRadius: "8px",
-                        padding: "1rem",
-                        maxHeight: "500px",
-                        overflowY: "auto",
-                      }}
-                    >
-                      <h4>{selectedLesson.title}</h4>
-                      {loadingLesson ? (
-                        <p style={{ color: "#888", fontStyle: "italic" }}>Preparing your lesson...</p>
-                      ) : (
-                        <p style={{ whiteSpace: "pre-wrap" }}>{lessonExplanation}</p>
-                      )}
+                {course && (
+                  <div className="course-columns">
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ fontFamily: "Fraunces, serif", marginTop: 0 }}>{course.title}</h3>
+                      <ul className="lesson-list">
+                        {course.lessons.map((lesson) => (
+                          <li
+                            key={lesson.lesson_number}
+                            onClick={() => handleLessonClick(lesson)}
+                            className={`lesson-item ${
+                              selectedLesson?.lesson_number === lesson.lesson_number ? "selected" : ""
+                            }`}
+                          >
+                            <p className="lesson-item-title">{lesson.title}</p>
+                            <p className="lesson-item-summary">{lesson.summary}</p>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
 
-            {/* Chat section */}
-            <div style={{ marginTop: "2.5rem" }}>
-              <h2>Chat with your tutor</h2>
-              <p style={{ color: "#666", fontSize: "0.9rem" }}>
-                Discussing: <strong>{activeDocument.filename}</strong>
-              </p>
+                    {selectedLesson && (
+                      <div className="lesson-panel">
+                        <h4>{selectedLesson.title}</h4>
 
-              <div
-                style={{
-                  border: "1px solid #ccc",
-                  borderRadius: "8px",
-                  height: "350px",
-                  overflowY: "auto",
-                  padding: "1rem",
-                  marginBottom: "1rem",
-                  backgroundColor: "#fafafa",
-                }}
-              >
-                {chatMessages.map((msg, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      marginBottom: "0.75rem",
-                      textAlign: msg.role === "user" ? "right" : "left",
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "0.5rem 0.75rem",
-                        borderRadius: "12px",
-                        maxWidth: "80%",
-                        whiteSpace: "pre-wrap",
-                        backgroundColor: msg.role === "user" ? "#0084ff" : "#e5e5ea",
-                        color: msg.role === "user" ? "white" : "black",
-                      }}
-                    >
-                      {msg.text}
-                    </span>
-                  </div>
-                ))}
-                {chatLoading && (
-                  <div style={{ textAlign: "left", color: "#888", fontStyle: "italic" }}>
-                    Tutor is thinking...
+                        {loadingLesson ? (
+                          <p className="muted-italic">Preparing your lesson...</p>
+                        ) : (
+                          <p className="lesson-panel-text">{lessonExplanation}</p>
+                        )}
+
+                        {!loadingLesson && (
+                          <div className="quiz-block">
+                            {!quizQuestions && !quizLoading && (
+                              <button className="secondary" onClick={handleStartQuiz}>
+                                Take a Quiz on this Lesson
+                              </button>
+                            )}
+                            {quizLoading && <p className="muted-italic">Writing your quiz...</p>}
+                            {quizError && <p className="error-text">{quizError}</p>}
+
+                            {currentQuestion && (
+                              <div>
+                                <p className="quiz-progress">
+                                  Question {currentQuestionIndex + 1} of {quizQuestions.length}
+                                </p>
+                                <p className="quiz-question">{currentQuestion.question}</p>
+
+                                {currentQuestion.options.map((option, i) => {
+                                  let optionClass = "quiz-option";
+                                  if (answerRevealed) {
+                                    optionClass += " locked";
+                                    if (i === currentQuestion.correct_index) optionClass += " correct";
+                                    else if (i === selectedAnswer) optionClass += " incorrect";
+                                  }
+                                  return (
+                                    <div
+                                      key={i}
+                                      onClick={() => handleSelectAnswer(i)}
+                                      className={optionClass}
+                                    >
+                                      {option}
+                                    </div>
+                                  );
+                                })}
+
+                                {answerRevealed && (
+                                  <div>
+                                    <p className="quiz-explanation">{currentQuestion.explanation}</p>
+                                    <button onClick={handleNextQuestion}>
+                                      {currentQuestionIndex + 1 < quizQuestions.length
+                                        ? "Next Question"
+                                        : "See Score"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {quizFinished && (
+                              <p className="quiz-score">
+                                You scored {quizScore} / {quizQuestions.length}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
-                <div ref={chatEndRef} />
               </div>
 
-              <form onSubmit={handleSendChatMessage} style={{ display: "flex", gap: "0.5rem" }}>
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Ask a question about your document..."
-                  style={{ flex: 1, padding: "0.5rem" }}
-                  disabled={chatLoading}
-                />
-                <button type="submit" disabled={chatLoading || !chatInput.trim()}>
-                  Send
-                </button>
-              </form>
-            </div>
-          </>
-        )}
+              <div className="chat-block">
+                <h2 className="section-title">Chat with your tutor</h2>
+                <p className="chat-subtitle">
+                  Discussing: <strong>{activeDocument.filename}</strong>
+                </p>
+
+                <div className="chat-window">
+                  {chatMessages.map((msg, i) => (
+                    <div key={i} className={`chat-row ${msg.role}`}>
+                      <span className={`chat-bubble ${msg.role}`}>{msg.text}</span>
+                    </div>
+                  ))}
+                  {chatLoading && (
+                    <div className="chat-row tutor">
+                      <span className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </span>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <form onSubmit={handleSendChatMessage} className="chat-form">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask a question about your document..."
+                    disabled={chatLoading}
+                  />
+                  <button type="submit" disabled={chatLoading || !chatInput.trim()}>
+                    Send
+                  </button>
+                </form>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "400px" }}>
-      <h1>E-Learning AI Tutor</h1>
-      <form>
-        <div style={{ marginBottom: "1rem" }}>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: "100%", padding: "0.5rem" }}
-            required
-          />
-        </div>
-        <div style={{ marginBottom: "1rem" }}>
-          <input
-            type="password"
-            placeholder="Password (min 6 characters)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: "100%", padding: "0.5rem" }}
-            required
-          />
-        </div>
-        <button onClick={handleLogin} disabled={loading} style={{ marginRight: "0.5rem" }}>
-          Log In
-        </button>
-        <button onClick={handleSignUp} disabled={loading}>
-          Sign Up
-        </button>
-      </form>
-      {message && <p style={{ marginTop: "1rem" }}>{message}</p>}
+    <div className="app-shell">
+      <div className="auth-card">
+        <h1 className="app-title" style={{ fontSize: "1.6rem" }}>
+          E-Learning AI Tutor
+        </h1>
+        <p className="session-line">Sign in to start learning from your own notes.</p>
+        <form>
+          <div className="auth-field">
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="auth-field">
+            <input
+              type="password"
+              placeholder="Password (min 6 characters)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          <div className="auth-actions">
+            <button onClick={handleLogin} disabled={loading}>
+              Log In
+            </button>
+            <button className="secondary" onClick={handleSignUp} disabled={loading}>
+              Sign Up
+            </button>
+          </div>
+        </form>
+        {message && <p className="auth-message">{message}</p>}
+      </div>
     </div>
   );
 }
