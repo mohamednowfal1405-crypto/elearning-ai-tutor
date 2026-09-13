@@ -355,6 +355,51 @@ input[type="file"] {
   color: var(--accent);
 }
 
+/* Lecture */
+.lecture-slide {
+  background: #fbfaf8;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-top: 0.5rem;
+}
+
+.lecture-slide-title {
+  font-family: "Fraunces", serif;
+  margin: 0.25rem 0 0.75rem;
+  color: var(--text);
+}
+
+.lecture-bullets {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.lecture-caption {
+  background: var(--surface-alt);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.caption-highlight {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.lecture-controls {
+  display: flex;
+  gap: 0.6rem;
+}
+
 /* Chat */
 .chat-block {
   margin-top: 2.5rem;

@@ -147,6 +147,7 @@ YOUR ANSWER:"""
             # Not an overload issue - some other real error, don't hide it
             raise
 
+
 def generate_course_structure(document_text: str, filename: str) -> dict:
     """
     Sends the full document text to Gemini and asks it to design a
@@ -196,6 +197,7 @@ DOCUMENT CONTENT:
 
             raise
 
+
 def generate_lesson_explanation(
     lesson_title: str, lesson_summary: str, user_id: str, document_id: int
 ) -> str:
@@ -203,7 +205,6 @@ def generate_lesson_explanation(
     Generates a detailed, tutor-style explanation for one specific lesson,
     grounded in the most relevant chunks of the student's own document.
     """
-    # Reuse our existing RAG search, using the lesson title+summary as the "question"
     search_query = f"{lesson_title}: {lesson_summary}"
     relevant_chunks = search_relevant_chunks(search_query, user_id, document_id, match_count=5)
 
@@ -247,6 +248,7 @@ LESSON EXPLANATION:"""
                 return "The AI tutor is experiencing high demand right now. Please try again in a few seconds."
 
             raise
+
 
 def generate_lesson_quiz(
     lesson_title: str, lesson_summary: str, user_id: str, document_id: int
@@ -300,6 +302,73 @@ CONTEXT FROM THE STUDENT'S DOCUMENT:
             )
             result = json.loads(response.text)
             return result["questions"]
+        except Exception as e:
+            is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
+            is_last_attempt = attempt == max_attempts
+
+            if is_overloaded and not is_last_attempt:
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
+
+            raise
+
+
+def generate_lecture_script(
+    lesson_title: str, lesson_summary: str, user_id: str, document_id: int
+) -> list[dict]:
+    """
+    Generates a slide-by-slide lecture script for a lesson: each slide has
+    on-screen bullet points plus a longer spoken narration line, meant to
+    be read aloud via the browser's text-to-speech while bullets display.
+    """
+    search_query = f"{lesson_title}: {lesson_summary}"
+    relevant_chunks = search_relevant_chunks(search_query, user_id, document_id, match_count=5)
+
+    if not relevant_chunks:
+        return []
+
+    context = "\n\n---\n\n".join(relevant_chunks)
+
+    prompt = f"""You are an AI lecturer preparing a spoken lesson for a student, based on their own uploaded material.
+
+LESSON TITLE: {lesson_title}
+LESSON SUMMARY: {lesson_summary}
+
+Using ONLY the context below, write a lecture broken into 4 to 7 slides. Each slide needs:
+- A short slide title
+- 2-4 short bullet points (a few words each) to display on screen
+- A "narration" script: 2-4 natural, spoken sentences a friendly teacher would say aloud while this slide is shown - warmer and more conversational than the bullets, explaining the point properly.
+
+Respond with ONLY valid JSON, no other text, no markdown code fences, in exactly this structure:
+{{
+  "slides": [
+    {{
+      "slide_title": "string",
+      "bullets": ["string", "string"],
+      "narration": "string"
+    }}
+  ]
+}}
+
+CONTEXT FROM THE STUDENT'S DOCUMENT:
+{context}
+"""
+
+    max_attempts = 3
+    wait_seconds = 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            result = json.loads(response.text)
+            return result["slides"]
         except Exception as e:
             is_overloaded = "503" in str(e) or "UNAVAILABLE" in str(e)
             is_last_attempt = attempt == max_attempts

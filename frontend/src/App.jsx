@@ -37,6 +37,16 @@ function App() {
   const [answerRevealed, setAnswerRevealed] = useState(false);
   const [quizScore, setQuizScore] = useState(0);
 
+  const [lectureSlides, setLectureSlides] = useState(null);
+  const [lectureLoading, setLectureLoading] = useState(false);
+  const [lectureError, setLectureError] = useState("");
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lectureFinished, setLectureFinished] = useState(false);
+  const [captionText, setCaptionText] = useState("");
+  const [spokenWordStart, setSpokenWordStart] = useState(0);
+  const [spokenWordEnd, setSpokenWordEnd] = useState(0);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -52,6 +62,12 @@ function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis.cancel();
+    };
+  }, []);
 
   async function handleSignUp(e) {
     e.preventDefault();
@@ -78,6 +94,7 @@ function App() {
   }
 
   async function handleLogout() {
+    window.speechSynthesis.cancel();
     await supabase.auth.signOut();
     setActiveDocument(null);
     setChatMessages([]);
@@ -209,11 +226,24 @@ function App() {
     setQuizScore(0);
   }
 
+  function resetLectureState() {
+    window.speechSynthesis.cancel();
+    setLectureSlides(null);
+    setLectureError("");
+    setCurrentSlideIndex(0);
+    setIsPlaying(false);
+    setLectureFinished(false);
+    setCaptionText("");
+    setSpokenWordStart(0);
+    setSpokenWordEnd(0);
+  }
+
   async function handleLessonClick(lesson) {
     setSelectedLesson(lesson);
     setLessonExplanation("");
     setLoadingLesson(true);
     resetQuizState();
+    resetLectureState();
 
     try {
       const params = new URLSearchParams({
@@ -282,12 +312,103 @@ function App() {
     setCurrentQuestionIndex((prev) => prev + 1);
   }
 
+  async function handleStartLecture() {
+    if (!selectedLesson) return;
+
+    resetLectureState();
+    setLectureLoading(true);
+
+    try {
+      const params = new URLSearchParams({
+        user_id: session.user.id,
+        document_id: activeDocument.id,
+        lesson_title: selectedLesson.title,
+        lesson_summary: selectedLesson.summary,
+      });
+      const response = await fetch(`${API_URL}/lecture-script?${params.toString()}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setLectureError(`Lecture generation failed: ${data.detail}`);
+      } else {
+        setLectureSlides(data.slides);
+      }
+    } catch (err) {
+      setLectureError("Could not reach the backend. Is it running?");
+    }
+
+    setLectureLoading(false);
+  }
+
+  function speakSlide(index, slides) {
+    window.speechSynthesis.cancel();
+
+    if (index >= slides.length) {
+      setIsPlaying(false);
+      setLectureFinished(true);
+      setCaptionText("");
+      return;
+    }
+
+    const narration = slides[index].narration;
+    setCaptionText(narration);
+    setSpokenWordStart(0);
+    setSpokenWordEnd(0);
+
+    const utterance = new SpeechSynthesisUtterance(narration);
+    utterance.rate = 1;
+
+    utterance.onboundary = (event) => {
+      if (event.name === "word" || event.charIndex !== undefined) {
+        const start = event.charIndex;
+        const rest = narration.slice(start);
+        const match = rest.match(/^\S+/);
+        const wordLength = match ? match[0].length : 0;
+        setSpokenWordStart(start);
+        setSpokenWordEnd(start + wordLength);
+      }
+    };
+
+    utterance.onend = () => {
+      setCurrentSlideIndex((prevIndex) => {
+        const nextIndex = prevIndex + 1;
+        speakSlide(nextIndex, slides);
+        return nextIndex;
+      });
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function handlePlayLecture() {
+    if (!lectureSlides) return;
+    setIsPlaying(true);
+    setLectureFinished(false);
+    speakSlide(currentSlideIndex, lectureSlides);
+  }
+
+  function handlePauseLecture() {
+    window.speechSynthesis.cancel();
+    setIsPlaying(false);
+  }
+
+  function handleReplayLecture() {
+    setCurrentSlideIndex(0);
+    setLectureFinished(false);
+    setIsPlaying(true);
+    speakSlide(0, lectureSlides);
+  }
+
   if (session) {
     const currentQuestion =
       quizQuestions && currentQuestionIndex < quizQuestions.length
         ? quizQuestions[currentQuestionIndex]
         : null;
     const quizFinished = quizQuestions && currentQuestionIndex >= quizQuestions.length;
+    const currentSlide =
+      lectureSlides && currentSlideIndex < lectureSlides.length
+        ? lectureSlides[currentSlideIndex]
+        : null;
 
     return (
       <div className="app-shell">
@@ -360,59 +481,123 @@ function App() {
                         )}
 
                         {!loadingLesson && (
-                          <div className="quiz-block">
-                            {!quizQuestions && !quizLoading && (
-                              <button className="secondary" onClick={handleStartQuiz}>
-                                Take a Quiz on this Lesson
-                              </button>
-                            )}
-                            {quizLoading && <p className="muted-italic">Writing your quiz...</p>}
-                            {quizError && <p className="error-text">{quizError}</p>}
+                          <>
+                            <div className="quiz-block">
+                              {!lectureSlides && !lectureLoading && (
+                                <button className="secondary" onClick={handleStartLecture}>
+                                  Start AI Lecture
+                                </button>
+                              )}
+                              {lectureLoading && (
+                                <p className="muted-italic">Preparing your lecture...</p>
+                              )}
+                              {lectureError && <p className="error-text">{lectureError}</p>}
 
-                            {currentQuestion && (
-                              <div>
-                                <p className="quiz-progress">
-                                  Question {currentQuestionIndex + 1} of {quizQuestions.length}
-                                </p>
-                                <p className="quiz-question">{currentQuestion.question}</p>
+                              {currentSlide && (
+                                <div className="lecture-slide">
+                                  <p className="quiz-progress">
+                                    Slide {currentSlideIndex + 1} of {lectureSlides.length}
+                                  </p>
+                                  <h5 className="lecture-slide-title">{currentSlide.slide_title}</h5>
+                                  <ul className="lecture-bullets">
+                                    {currentSlide.bullets.map((bullet, i) => (
+                                      <li key={i}>{bullet}</li>
+                                    ))}
+                                  </ul>
 
-                                {currentQuestion.options.map((option, i) => {
-                                  let optionClass = "quiz-option";
-                                  if (answerRevealed) {
-                                    optionClass += " locked";
-                                    if (i === currentQuestion.correct_index) optionClass += " correct";
-                                    else if (i === selectedAnswer) optionClass += " incorrect";
-                                  }
-                                  return (
-                                    <div
-                                      key={i}
-                                      onClick={() => handleSelectAnswer(i)}
-                                      className={optionClass}
-                                    >
-                                      {option}
-                                    </div>
-                                  );
-                                })}
+                                  {captionText && (
+                                    <p className="lecture-caption">
+                                      {captionText.slice(0, spokenWordStart)}
+                                      <span className="caption-highlight">
+                                        {captionText.slice(spokenWordStart, spokenWordEnd)}
+                                      </span>
+                                      {captionText.slice(spokenWordEnd)}
+                                    </p>
+                                  )}
 
-                                {answerRevealed && (
-                                  <div>
-                                    <p className="quiz-explanation">{currentQuestion.explanation}</p>
-                                    <button onClick={handleNextQuestion}>
-                                      {currentQuestionIndex + 1 < quizQuestions.length
-                                        ? "Next Question"
-                                        : "See Score"}
-                                    </button>
+                                  <div className="lecture-controls">
+                                    {!isPlaying ? (
+                                      <button onClick={handlePlayLecture}>
+                                        {currentSlideIndex === 0 ? "Play Lecture" : "Resume"}
+                                      </button>
+                                    ) : (
+                                      <button className="secondary" onClick={handlePauseLecture}>
+                                        Pause
+                                      </button>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            )}
+                                </div>
+                              )}
 
-                            {quizFinished && (
-                              <p className="quiz-score">
-                                You scored {quizScore} / {quizQuestions.length}
-                              </p>
-                            )}
-                          </div>
+                              {lectureFinished && (
+                                <div className="lecture-slide">
+                                  <p className="quiz-score">Lecture complete!</p>
+                                  <div className="lecture-controls">
+                                    <button className="secondary" onClick={handleReplayLecture}>
+                                      Replay Lecture
+                                    </button>
+                                    {!quizQuestions && !quizLoading && (
+                                      <button onClick={handleStartQuiz}>Take the Quiz</button>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="quiz-block">
+                              {!quizQuestions && !quizLoading && !lectureFinished && (
+                                <button className="secondary" onClick={handleStartQuiz}>
+                                  Take a Quiz on this Lesson
+                                </button>
+                              )}
+                              {quizLoading && <p className="muted-italic">Writing your quiz...</p>}
+                              {quizError && <p className="error-text">{quizError}</p>}
+
+                              {currentQuestion && (
+                                <div>
+                                  <p className="quiz-progress">
+                                    Question {currentQuestionIndex + 1} of {quizQuestions.length}
+                                  </p>
+                                  <p className="quiz-question">{currentQuestion.question}</p>
+
+                                  {currentQuestion.options.map((option, i) => {
+                                    let optionClass = "quiz-option";
+                                    if (answerRevealed) {
+                                      optionClass += " locked";
+                                      if (i === currentQuestion.correct_index) optionClass += " correct";
+                                      else if (i === selectedAnswer) optionClass += " incorrect";
+                                    }
+                                    return (
+                                      <div
+                                        key={i}
+                                        onClick={() => handleSelectAnswer(i)}
+                                        className={optionClass}
+                                      >
+                                        {option}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {answerRevealed && (
+                                    <div>
+                                      <p className="quiz-explanation">{currentQuestion.explanation}</p>
+                                      <button onClick={handleNextQuestion}>
+                                        {currentQuestionIndex + 1 < quizQuestions.length
+                                          ? "Next Question"
+                                          : "See Score"}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {quizFinished && (
+                                <p className="quiz-score">
+                                  You scored {quizScore} / {quizQuestions.length}
+                                </p>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     )}

@@ -12,6 +12,7 @@ from rag import (
     generate_course_structure,
     generate_lesson_explanation,
     generate_lesson_quiz,
+    generate_lecture_script,
 )
 
 app = FastAPI(title="E-Learning AI Tutor API")
@@ -232,3 +233,25 @@ def lesson_quiz(user_id: str, document_id: int, lesson_title: str, lesson_summar
         )
 
     return {"questions": questions}
+
+
+@app.get("/lecture-script")
+def lecture_script(user_id: str, document_id: int, lesson_title: str, lesson_summary: str):
+    """
+    Generates a slide-by-slide lecture script for a lesson, to be narrated
+    in the browser via text-to-speech.
+    """
+    try:
+        slides = generate_lecture_script(
+            lesson_title, lesson_summary, user_id, document_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lecture generation failed: {str(e)}")
+
+    if not slides:
+        raise HTTPException(
+            status_code=404,
+            detail="Not enough content found to generate a lecture for this lesson.",
+        )
+
+    return {"slides": slides}
